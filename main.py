@@ -24,7 +24,7 @@ def create_token(data:dict):
 #Login API (Token Genrate)
 @app.post("/login")
 def login(username:str,password:str):
-    if username == "aditya" and password == "aditya":
+    if username != "aditya" or password != "aditya":
         raise HTTPException(
             status_code = 401,
             detail = "invalid cred"            
