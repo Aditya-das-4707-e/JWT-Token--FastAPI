@@ -1,14 +1,15 @@
-# JWT Authentication with FastAPI
+# JWT Authentication with FastAPI (Day 22)
 
-A clean, robust implementation of **JSON Web Token (JWT)** authentication using **FastAPI** and the `python-jose` library. This project demonstrates how to generate, sign, and verify JWT tokens to protect endpoints.
+A production-level implementation of **JSON Web Token (JWT)** authentication using **FastAPI**, **OAuth2**, and secure password hashing with `passlib` (using `bcrypt`).
 
 ---
 
 ## 🔑 Key Features
-- **Stateless Authentication**: Uses JWTs signed with `HS256` symmetric encryption.
-- **Expiration Protection**: Generated tokens automatically expire after **30 minutes**.
-- **Route Protection**: Implements FastAPI's dependency injection (`Depends`) to secure endpoints.
-- **Interactive Documentation**: Instantly explore and test the endpoints via Swagger UI.
+- **OAuth2 Password Flow**: Built-in support for the standard OAuth2 Password flow with `OAuth2PasswordBearer` and `OAuth2PasswordRequestForm`.
+- **Secure Password Hashing**: Passwords stored in the database are salted and hashed using `bcrypt` to prevent plain-text leaks.
+- **Stateless Authentication**: Uses self-contained JWT access tokens signed with a symmetric secret key (`HS256`).
+- **Access Expiration**: Generated tokens automatically expire after **30 minutes**.
+- **Interactive Documentation**: Easily authorize and test API endpoints directly inside the Swagger UI.
 
 ---
 
@@ -23,44 +24,48 @@ sequenceDiagram
     participant Server as FastAPI Server
 
     Note over Client,Server: Step 1: Authentication / Login
-    Client->>Server: POST /login?username=aditya&password=aditya
+    Client->>Server: POST /login (Form data: username=admin&password=1234)
+    Note over Server: Check user in database & verify hashed password
     alt Credentials Invalid
-        Server-->>Client: 401 Unauthorized (invalid cred)
+        Server-->>Client: 400 Bad Request (invalid credentials)
     else Credentials Valid
-        Note over Server: Generate JWT with sub: aditya & exp time
-        Server-->>Client: 200 OK (access_token)
+        Note over Server: Generate JWT with sub: admin & exp time
+        Server-->>Client: 200 OK (access_token, token_type: Bearer)
     end
 
-    Note over Client,Server: Step 2: Accessing Protected Endpoint
-    Client->>Server: GET /secure (Header "token: <jwt_token>")
+    Note over Client,Server: Step 2: Accessing Protected Route
+    Client->>Server: GET /protected (Header "Authorization: Bearer <jwt_token>")
     alt Token Invalid / Expired / Missing
-        Server-->>Client: 401 Unauthorized (invalid token)
+        Server-->>Client: 401 Unauthorized (invalid authentication)
     else Token Valid
-        Note over Server: Decode & verify token signature
-        Server-->>Client: 200 OK (secure data + user payload)
+        Note over Server: Decode JWT, verify signature, extract username
+        Server-->>Client: 200 OK (Hello admin, access granted)
     end
 ```
 
 ---
 
-## 📂 File Description
+## 📂 File Structure & Key Components
 
-This is the core application file. It contains:
-1. **Configuration**:
-   * `SECRET_KEY`: Used to sign the JWT signature.
-   * `ALGORITHM`: Set to `"HS256"`.
-2. **`create_token(data: dict)`**:
+### [main.py](file:///home/aditya/Desktop/Fast%20API/day%2022/main.py)
+This is the core application file containing all the logic:
+1. **Password Hashing Setup**:
+   * Uses `CryptContext(schemes=["bcrypt"], deprecated="auto")` to securely hash and verify passwords.
+2. **FastAPI OAuth2 Integration**:
+   * `OAuth2PasswordBearer(tokenUrl="login")` tells FastAPI the endpoint to obtain token is `login`.
+   * Integrates a dummy database (`fake_users_db`) mapping username `admin` to a secure `hashed_password`.
+3. **`create_token(data: dict)`**:
    * Encodes a payload dictionary into a JWT.
    * Adds an `exp` (expiration) timestamp calculated as UTC `now` + 30 minutes.
-3. **`login(username, password)`**:
-   * Accepts credentials as query parameters.
-   * Compares them against hardcoded values (`aditya` / `aditya`).
-   * Generates and returns a JWT if valid.
-4. **`varify_token(token)`**:
-   * A FastAPI Dependency that reads the token from a custom header named `token`.
-   * Decodes and validates the token. Raises a `401 Unauthorized` exception if invalid or expired.
-5. **`secure_data(user)`**:
-   * A protected route that uses `Depends(varify_token)`.
+4. **`login(form_data)`**:
+   * Expects standard URL-encoded form data (`username` and `password`).
+   * Validates credentials against `fake_users_db`.
+   * Returns a standard OAuth2-compliant JSON structure: `{"access_token": "...", "token_type": "bearer"}`.
+5. **`verify_token(token)`**:
+   * A FastAPI Dependency that retrieves the token from the standard `Authorization` header.
+   * Decodes and validates the token signature and expiration.
+6. **`protected_route(username)`**:
+   * A protected route that uses `Depends(verify_token)`.
 
 ---
 
@@ -88,10 +93,13 @@ env\Scripts\activate.bat
 ```
 
 ### 3. Install Dependencies
-If not already installed, run:
+Ensure you have the required packages installed in your environment:
 ```bash
-pip install fastapi uvicorn python-jose
+pip install fastapi uvicorn python-jose[cryptography] passlib[bcrypt] "bcrypt<4.1.0" python-multipart
 ```
+> [!NOTE]
+> `bcrypt` is pinned to `<4.1.0` (such as `4.0.1`) to ensure compatibility with `passlib`.
+> `python-multipart` is required by FastAPI to parse OAuth2 form logins.
 
 ### 4. Run the Uvicorn Server
 Start the development server with auto-reload enabled:
@@ -108,53 +116,54 @@ uvicorn main:app --reload
 
 ### Method A: Interactive API Docs (Recommended)
 1. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) in your browser.
-2. Expand the `POST /login` route, click **Try it out**, enter `aditya` for both username and password, and click **Execute**.
-3. Copy the returned `access_token` from the response body.
-4. Expand the `GET /secure` route, click **Try it out**, paste the token into the `token` header parameter, and click **Execute**.
+2. Click the green **Authorize** button at the top right.
+3. Enter `admin` for Username and `1234` for Password. Click **Authorize** then click **Close**.
+4. Now expand the `GET /protected` endpoint, click **Try it out**, and click **Execute**.
+5. The API documentation automatically sends the retrieved token in the `Authorization: Bearer <token>` header!
 
 ### Method B: Testing with `curl`
 
 **1. Login & Generate Token:**
 ```bash
 curl -X 'POST' \
-  'http://127.0.0.1:8000/login?username=aditya&password=aditya' \
-  -H 'accept: application/json'
+  'http://127.0.0.1:8000/login' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=admin&password=1234'
 ```
 **Response:**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer"
 }
 ```
 
 **2. Access Protected Route (Valid Token):**
 ```bash
 curl -X 'GET' \
-  'http://127.0.0.1:8000/secure' \
+  'http://127.0.0.1:8000/protected' \
   -H 'accept: application/json' \
-  -H 'token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+  -H 'Authorization: Bearer <paste_access_token_here>'
 ```
 **Response:**
 ```json
 {
-  "message": "this is secure data",
-  "user": {
-    "sub": "aditya",
-    "exp": 1782489600
-  }
+  "message": "Hello admin, you have access to protected data!",
+  "user": "admin"
 }
 ```
 
 **3. Access Protected Route (Without/Invalid Token):**
 ```bash
 curl -X 'GET' \
-  'http://127.0.0.1:8000/secure' \
+  'http://127.0.0.1:8000/protected' \
   -H 'accept: application/json' \
-  -H 'token: invalid_token_here'
+  -H 'Authorization: Bearer invalid_token'
 ```
 **Response:**
 ```json
 {
-  "detail": "invalid token"
+  "detail": "invalid authentication"
 }
 ```
